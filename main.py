@@ -20,7 +20,7 @@ def home():
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    bot.reply_to(message, "✅ UGX P2P Bot is Active!\nMode: PAIR MODE - 1 Buy + 1 Sell\nCommands:\n/start\n/price\n/status")
+    bot.reply_to(message, "✅ UGX P2P Bot is Active!\nPAIR MODE\n/start\n/price\n/status")
 
 @bot.message_handler(commands=['price'])
 def price_cmd(message):
@@ -36,7 +36,7 @@ def price_cmd(message):
 
 @bot.message_handler(commands=['status'])
 def status_cmd(message):
-    status_msg = f"🤖 BOT HEALTH\nMode: PAIR MODE\nLast check: {last_check_time}\nLast GAP: {last_gap:.2f} UGX\nTotal scans: {scan_count}\nLast error: {last_error}\nStatus: Running ✅"
+    status_msg = f"BOT HEALTH\nMode: PAIR MODE\nLast check: {last_check_time}\nLast GAP: {last_gap:.2f} UGX\nTotal scans: {scan_count}\nLast error: {last_error}\nStatus: Running"
     bot.reply_to(message, status_msg)
 
 def get_offers(trade, pay_types):
@@ -93,11 +93,41 @@ def format_signal(check_only=False):
             g = float(s['price']) - float(b['price'])
             pairs.append((b,s,g))
 
-        msg = f"🔥 GAP {gap:.0f} UGX | {len(pairs)} PAIRS FOUND 🔥\n\n"
+        msg = f"GAP {gap:.0f} UGX | {len(pairs)} PAIRS FOUND\n\n"
 
         for idx, (b,s,g) in enumerate(pairs, 1):
-            msg += f"--- PAIR {idx} | GAP {g:.0f} UGX ---\n"
-            msg += f"BUY @ {b['price']} | {b['nick']} ({b['orders']} orders {b['rate']}%)\n"
-            msg += f"Limit {b['min']}-{b['max']} | Avail {b['avail']}\n"
-            msg += f"{b['link']}\n\n"
-            msg += f"SELL @ {s['price
+            msg += f"--- PAIR {idx} | GAP {g:.0f} ---\n"
+            msg += "BUY @ " + str(b['price']) + " | " + str(b['nick']) + "\n"
+            msg += "Limit " + str(b['min']) + "-" + str(b['max']) + " | Avail " + str(b['avail']) + "\n"
+            msg += str(b['link']) + "\n\n"
+            msg += "SELL @ " + str(s['price']) + " | " + str(s['nick']) + "\n"
+            msg += "Limit " + str(s['min']) + "-" + str(s['max']) + " | Avail " + str(s['avail']) + "\n"
+            msg += str(s['link']) + "\n\n"
+            profit20 = g*20
+            profit100 = g*100
+            msg += f"Profit $20={profit20:.0f} | $100={profit100:.0f} UGX\n\n"
+
+        return msg
+    except Exception as e:
+        last_error = str(e)
+        print(f"Error: {e}")
+        return None
+
+def scanner():
+    while True:
+        try:
+            signal = format_signal()
+            if signal:
+                bot.send_message(CHAT_ID, signal, disable_web_page_preview=True)
+        except Exception as e:
+            print(f"Error scanner: {e}")
+        time.sleep(120)
+
+def run_bot():
+    bot.infinity_polling()
+
+threading.Thread(target=scanner, daemon=True).start()
+threading.Thread(target=run_bot, daemon=True).start()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=PORT)
