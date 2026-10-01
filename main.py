@@ -6,44 +6,51 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 MIN_GAP = 70.0
 URL = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+LINK = "https://p2p.binance.com/en/trade/all-payments/USDT?fiat=UGX"
 FILTER = ["airtel", "mtn", "airtime", "mobile"]
 
-last_data = {"gap":0, "buy":0, "sell":0, "scans":0}
+last = {"gap":0, "buy":0, "sell":0, "scans":0}
 
-async def get_offers(type_):
+async def get_offers(t):
     try:
-        payload = {"asset":"USDT","fiat":"UGX","merchantCheck":False,"page":1,"rows":10,"tradeType":type_,"payTypes":[]}
+        payload = {"asset":"USDT","fiat":"UGX","merchantCheck":False,"page":1,"rows":10,"tradeType":t,"payTypes":[]}
         async with aiohttp.ClientSession() as s:
             async with s.post(URL, json=payload, timeout=10) as r:
                 j = await r.json()
                 out=[]
-                for i in j.get("data",[])[:10]:
-                    adv=i.get("adv",{})
+                for x in j.get("data",[])[:10]:
+                    adv=x.get("adv",{})
                     price=float(adv.get("price",0))
+                    min_a=adv.get("minSingleTransAmount","?")
+                    max_a=adv.get("maxSingleTransAmount","?")
                     methods=" ".join([m.get("tradeMethodName","").lower() for m in adv.get("tradeMethods",[])])
                     if any(f in methods for f in FILTER):
-                        out.append({"price":price,"name":i.get("advertiser",{}).get("nickName",""),"pay":methods})
+                        out.append({"price":price,"name":x.get("advertiser",{}).get("nickName",""),"min":min_a,"max":max_a,"pay":methods})
                 return out
     except:
         return []
 
 async def price_cmd(update, context):
-    await update.message.reply_text("Scanning...")
+    await update.message.reply_text("Scanning Airtel/MTN...")
     buys = await get_offers("BUY")
     sells = await get_offers("SELL")
     if not buys or not sells:
-        await update.message.reply_text("No data, try again")
+        await update.message.reply_text("No data")
         return
-    best_buy = min(buys, key=lambda x:x["price"])
-    best_sell = max(sells, key=lambda x:x["price"])
-    gap = best_sell["price"] - best_buy["price"]
-    last_data["gap"]=gap
-    last_data["buy"]=best_buy["price"]
-    last_data["sell"]=best_sell["price"]
-    await update.message.reply_text(f"BUY cheapest: {best_buy['price']} ({best_buy['name']})\nSELL highest: {best_sell['price']} ({best_sell['name']})\n\nGAP: {gap:.2f} UGX\nProfit $100 = {gap*100:.0f} UGX\n\nFilter: Airtel+MTN+Airtime")
+    b = min(buys, key=lambda x:x["price"])
+    s = max(sells, key=lambda x:x["price"])
+    gap = s["price"] - b["price"]
+    last["gap"]=gap
+    await update.message.reply_text(
+        f"💰 GAP: {gap:.2f} UGX\n\n"
+        f"BUY: {b['price']} UGX\nSeller: {b['name']}\nLimit: {b['min']} - {b['max']} UGX\nPay: {b['pay']}\n\n"
+        f"SELL: {s['price']} UGX\nBuyer: {s['name']}\nLimit: {s['min']} - {s['max']} UGX\nPay: {s['pay']}\n\n"
+        f"Profit $100 = {gap*100:.0f} UGX\n\n"
+        f"🔗 {LINK}"
+    )
 
 async def status_cmd(update, context):
-    await update.message.reply_text(f"Bot OK\nGap: {last_data['gap']}\nBuy: {last_data['buy']}\nSell: {last_data['sell']}\nScans: {last_data['scans']}")
+    await update.message.reply_text(f"Bot OK\nGap: {last['gap']}\nScans: {last['scans']}")
 
 async def loop_check(bot):
     while True:
@@ -51,15 +58,20 @@ async def loop_check(bot):
             buys = await get_offers("BUY")
             sells = await get_offers("SELL")
             if buys and sells:
-                best_buy = min(buys, key=lambda x:x["price"])
-                best_sell = max(sells, key=lambda x:x["price"])
-                gap = best_sell["price"] - best_buy["price"]
-                last_data["gap"]=gap
-                last_data["scans"]+=1
+                b = min(buys, key=lambda x:x["price"])
+                s = max(sells, key=lambda x:x["price"])
+                gap = s["price"] - b["price"]
+                last["scans"]+=1
+                last["gap"]=gap
                 if gap >= MIN_GAP:
-                    await bot.send_message(chat_id=CHAT_ID, text=f"🚀 GAP {gap:.2f} UGX!\nBuy {best_buy['price']} | Sell {best_sell['price']}\n$100 profit = {gap*100:.0f} UGX")
-        except:
-            pass
+                    await bot.send_message(chat_id=CHAT_ID, text=
+                        f"🚀 GAP {gap:.2f} UGX FOUND!\n\n"
+                        f"BUY @ {b['price']} ({b['name']})\nLimit {b['min']}-{b['max']}\n\n"
+                        f"SELL @ {s['price']} ({s['name']})\nLimit {s['min']}-{s['max']}\n\n"
+                        f"Profit $100 = {gap*100:.0f} UGX\n\n🔗 {LINK}"
+                    )
+        except Exception as e:
+            print(e)
         await asyncio.sleep(120)
 
 async def start_app():
