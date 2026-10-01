@@ -16,17 +16,17 @@ async def get_offers(t):
                 out=[]
                 for x in d.get("data",[])[:10]:
                     adv=x.get("adv",{})
-                    adv_no=x.get("advertiser",{}).get("userNo","")
                     price=float(adv.get("price",0))
                     pay=" ".join([m.get("tradeMethodName","") for m in adv.get("tradeMethods",[])])
                     if any(k in pay.lower() for k in ["mtn","airtel","airtime"]):
                         out.append({
                             "price":price,
                             "name":x.get("advertiser",{}).get("nickName",""),
-                            "userNo":adv_no,
-                            "advNo":adv.get("advNo",""),
+                            "userNo":x.get("advertiser",{}).get("userNo",""),
                             "min":adv.get("minSingleTransAmount","?"),
                             "max":adv.get("maxSingleTransAmount","?"),
+                            "available":adv.get("tradableQuantity","?"),
+                            "surplus":adv.get("surplusAmount","?"),
                             "pay":pay
                         })
                 return out
@@ -34,46 +34,51 @@ async def get_offers(t):
         return []
 
 async def start_cmd(u,c):
-    await u.message.reply_text("Bot alive ✅ Send /price")
+    await u.message.reply_text("Bot alive ✅\nCommands:\n/price - Check GAP with 2 direct links\n/status - Check bot status")
+
+async def status_cmd(u,c):
+    buys=await get_offers("BUY")
+    sells=await get_offers("SELL")
+    await u.message.reply_text(f"✅ Bot Online\nBUY offers found: {len(buys)}\nSELL offers found: {len(sells)}\nGAP alert: {MIN_GAP} UGX\nLink: {LINK}")
 
 async def price_cmd(u,c):
     await u.message.reply_text("Scanning...")
     buys=await get_offers("BUY")
     sells=await get_offers("SELL")
     if not buys or not sells:
-        await u.message.reply_text("No MTN/Airtel offers")
+        await u.message.reply_text("No offers")
         return
     b=min(buys, key=lambda x:x["price"])
     s=max(sells, key=lambda x:x["price"])
     gap=s["price"]-b["price"]
-    
-    # Direct links to merchant
     b_link = f"https://p2p.binance.com/en/advertiserDetail?advertiserNo={b['userNo']}"
     s_link = f"https://p2p.binance.com/en/advertiserDetail?advertiserNo={s['userNo']}"
-    
     msg=(f"💰 GAP: {gap:.2f} UGX (Profit $100={gap*100:.0f})\n\n"
          f"🟢 BUY: {b['price']} UGX\n"
          f"Seller: {b['name']}\n"
-         f"Limit: {b['min']}-{b['max']}\n"
+         f"Available: {b['available']} USDT\n"
+         f"Limit: {b['min']}-{b['max']} UGX\n"
          f"Pay: {b['pay']}\n"
          f"👉 Trade: {b_link}\n\n"
          f"🔴 SELL: {s['price']} UGX\n"
          f"Buyer: {s['name']}\n"
-         f"Limit: {s['min']}-{s['max']}\n"
+         f"Available: {s['available']} USDT\n"
+         f"Limit: {s['min']}-{s['max']} UGX\n"
          f"Pay: {s['pay']}\n"
          f"👉 Trade: {s_link}\n\n"
-         f"All offers: {LINK}")
+         f"All: {LINK}")
     await u.message.reply_text(msg)
 
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("price", price_cmd))
+    app.add_handler(CommandHandler("status", status_cmd))
     await app.bot.delete_webhook(drop_pending_updates=True)
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
-    print("Started")
+    print("Started OK")
     while True:
         await asyncio.sleep(3600)
 
