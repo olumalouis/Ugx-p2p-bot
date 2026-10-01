@@ -20,11 +20,11 @@ def home():
 
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    bot.reply_to(message, "✅ UGX P2P Bot is Active!\nScanning: Airtel + MTN every 2 min\nCommands:\n/start - Check bot\n/price - Current price now\n/status - Bot health")
+    bot.reply_to(message, "✅ UGX P2P Bot is Active!\nMode: ANY AMOUNT - Blank filter\nScanning: Airtel + MTN every 2 min\nCommands:\n/start - Check bot\n/price - Current price now\n/status - Bot health")
 
 @bot.message_handler(commands=['price'])
 def price_cmd(message):
-    bot.reply_to(message, "⏳ Checking market...")
+    bot.reply_to(message, "⏳ Checking market (ANY AMOUNT mode)...")
     try:
         buy_offers = get_offers("BUY", ["AirtelMoney", "MTNMobileMoney"])
         sell_offers = get_offers("SELL", ["AirtelMoney", "MTNMobileMoney"])
@@ -32,25 +32,25 @@ def price_cmd(message):
             buy_price = float(sorted(buy_offers, key=lambda x: float(x['adv']['price']))[0]['adv']['price'])
             sell_price = float(sorted(sell_offers, key=lambda x: float(x['adv']['price']), reverse=True)[0]['adv']['price'])
             gap = sell_price - buy_price
-            if gap >= 80:
-                signal = format_signal(check_only=True)
-                if signal:
-                    bot.send_message(message.chat.id, signal, disable_web_page_preview=True)
-                    return
-            bot.send_message(message.chat.id, f"📊 LIVE UGX Market:\nBuy: {buy_price} UGX\nSell: {sell_price} UGX\nGAP: {gap:.2f} UGX\n\nNeed GAP >=80 to alert. Current gap too small.")
+            signal = format_signal(check_only=True)
+            if signal:
+                bot.send_message(message.chat.id, signal, disable_web_page_preview=True)
+            else:
+                bot.send_message(message.chat.id, "❌ No signal formatted")
         else:
-            bot.reply_to(message, "❌ Could not fetch Binance now, try again in 1 min")
+            bot.reply_to(message, "❌ Could not fetch Binance now")
     except Exception as e:
         bot.reply_to(message, f"Error: {e}")
 
 @bot.message_handler(commands=['status'])
 def status_cmd(message):
-    status_msg = f"🤖 BOT HEALTH\n\nLast check: {last_check_time}\nLast GAP: {last_gap:.2f} UGX\nTotal scans: {scan_count}\nLast error: {last_error}\nCheck interval: Every 2 min\nStatus: Running ✅"
+    status_msg = f"🤖 BOT HEALTH\n\nMode: BLANK (Any Amount)\nLast check: {last_check_time}\nLast GAP: {last_gap:.2f} UGX\nTotal scans: {scan_count}\nLast error: {last_error}\nStatus: Running ✅"
     bot.reply_to(message, status_msg)
 
 def get_offers(trade, pay_types):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    payload = {"asset":"USDT","fiat":"UGX","tradeType":trade,"page":1,"rows":5,"payTypes":pay_types}
+    # BLANK MODE: no amount = show all merchants
+    payload = {"asset":"USDT","fiat":"UGX","tradeType":trade,"page":1,"rows":10,"payTypes":pay_types}
     try:
         r = requests.post(url, json=payload, timeout=10).json()
         return r['data']
@@ -99,23 +99,18 @@ def format_signal(check_only=False):
             adv_no = adv['advNo']
             merchant_link = f"https://p2p.binance.com/en/advertiserDetail?advertiserNo={user_no}"
             trade_link = f"https://p2p.binance.com/en/adDetail?adId={adv_no}"
-            return (f"Offer updated: {trade_type} USDT | {pay_name}\n"
-                    f"Price: {price} UGX per USDT\n"
-                    f"Available: {surplus} USDT\n"
-                    f"Limits: {min_lim} - {max_lim} UGX\n"
-                    f"Merchant: {nick}\n"
-                    f"Stats: {month_orders} orders | {finish_rate:.1f}%\n"
-                    f"Merchant Link: {merchant_link}\n"
-                    f"Direct Trade: {trade_link}\n\n")
+            return (f"{trade_type} {price} UGX | {pay_name}\n"
+                    f"👤 {nick} | {month_orders} orders {finish_rate:.0f}%\n"
+                    f"💰 Limit: {min_lim} - {max_lim} UGX | Avail: {surplus} USDT\n"
+                    f"🔗 Trade: {trade_link}\n\n")
 
-        msg = f"🔥 Binance P2P — USDT/UGX - GAP {gap:.2f} UGX 🔥\n\n"
-        msg += f"Buy USDT | Airtel + MTN\n\n"
+        msg = f"🔥 GAP {gap:.2f} UGX | ANY AMOUNT MODE 🔥\n\nBUY OFFERS (cheapest first):\n"
         for offer in buy_sorted[:2]:
-            msg += format_one(offer, "Buy")
-        msg += f"Sell USDT | Airtel + MTN\n\n"
+            msg += format_one(offer, "Buy @")
+        msg += f"SELL OFFERS (highest first):\n"
         for offer in sell_sorted[:3]:
-            msg += format_one(offer, "Sell")
-        msg += f"💰 Profit on 100 USDT: ~{gap*100:,.0f} UGX\n"
+            msg += format_one(offer, "Sell @")
+        msg += f"💡 You can trade ANY amount you have.\nCheck if your balance fits inside Limit above.\n💰 If you trade $20 profit ~{gap*20:,.0f} UGX | $100 profit ~{gap*100:,.0f} UGX\n"
         msg += f"P2P: https://p2p.binance.com/en/trade/all-payments/USDT?fiat=UGX"
         return msg
     except Exception as e:
