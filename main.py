@@ -26,19 +26,17 @@ def get_offers(trade, pay_types):
         return []
 
 def format_signal():
-    # SCAN BOTH PAYMENT METHODS
     buy_offers = get_offers("BUY", ["AirtelMoney", "MTNMobileMoney"])
     sell_offers = get_offers("SELL", ["AirtelMoney", "MTNMobileMoney"])
 
     if not buy_offers or not sell_offers:
         return None
 
-    # Find best prices
-    buy_offers_sorted = sorted(buy_offers, key=lambda x: float(x['adv']['price']))
-    sell_offers_sorted = sorted(sell_offers, key=lambda x: float(x['adv']['price']), reverse=True)
+    buy_sorted = sorted(buy_offers, key=lambda x: float(x['adv']['price']))
+    sell_sorted = sorted(sell_offers, key=lambda x: float(x['adv']['price']), reverse=True)
 
-    best_buy = buy_offers_sorted[0]
-    best_sell = sell_offers_sorted[0]
+    best_buy = buy_sorted[0]
+    best_sell = sell_sorted[0]
 
     buy_price = float(best_buy['adv']['price'])
     sell_price = float(best_sell['adv']['price'])
@@ -47,29 +45,45 @@ def format_signal():
     if gap < 80:
         return None
 
-    def format_one(adv_data, trade_type):
-        a = adv_data['adv']
-        u = adv_data['advertiser']
-        pay = ", ".join(a['tradeMethods'][0]['tradeMethodName'] if 'tradeMethods' in a else ["Mobile Money"])
-        # Detect pay type
-        pay_name = a['tradeMethods'][0]['tradeMethodName'] if a.get('tradeMethods') else "Mobile Money"
-        return (f"Offer updated: {trade_type} USDT | {pay_name}\n"
-                f"{a['price']} UGX per USDT\n"
-                f"Available: {a['surplusAmount']} USDT\n"
-                f"Limits: {a['minSingleTransAmount']}–{a['maxSingleTransAmount']} UGX\n"
-                f"Merchant: {u['nickName']} | {u['monthOrderCount']} monthly orders | {u['monthFinishRate']*100:.1f}% completion\n"
-                f"Binance P2P: https://p2p.binance.com/en/trade/all-payments/USDT?fiat=UGX\n\n")
+    def format_one(data, trade_type):
+        adv = data['adv']
+        user = data['advertiser']
 
-    msg = f"Binance P2P — USDT/UGX - GAP {gap:.2f} UGX\n\n"
+        price = adv['price']
+        surplus = adv['surplusAmount']
+        min_lim = adv['minSingleTransAmount']
+        max_lim = adv['maxSingleTransAmount']
+        pay_name = adv['tradeMethods'][0]['tradeMethodName'] if adv.get('tradeMethods') else "Mobile Money"
+
+        nick = user['nickName']
+        month_orders = user['monthOrderCount']
+        finish_rate = user['monthFinishRate']*100
+        user_no = user['userNo']
+        adv_no = adv['advNo']
+
+        merchant_link = f"https://p2p.binance.com/en/advertiserDetail?advertiserNo={user_no}"
+        trade_link = f"https://p2p.binance.com/en/adDetail?adId={adv_no}"
+
+        return (f"Offer updated: {trade_type} USDT | {pay_name}\n"
+                f"Price: {price} UGX per USDT\n"
+                f"Available: {surplus} USDT\n"
+                f"Limits: {min_lim} - {max_lim} UGX\n"
+                f"Merchant: {nick}\n"
+                f"Stats: {month_orders} monthly orders | {finish_rate:.1f}% completion\n"
+                f"Merchant Link: {merchant_link}\n"
+                f"Direct Trade: {trade_link}\n\n")
+
+    msg = f"🔥 Binance P2P — USDT/UGX - GAP {gap:.2f} UGX 🔥\n\n"
     msg += f"Buy USDT | Airtel + MTN\n\n"
-    for offer in buy_offers_sorted[:2]:
+    for offer in buy_sorted[:2]:
         msg += format_one(offer, "Buy")
 
     msg += f"Sell USDT | Airtel + MTN\n\n"
-    for offer in sell_offers_sorted[:3]:
+    for offer in sell_sorted[:3]:
         msg += format_one(offer, "Sell")
 
-    msg += f"💰 Profit on 100 USDT: ~{gap*100:,.0f} UGX"
+    msg += f"💰 Profit on 100 USDT: ~{gap*100:,.0f} UGX\n"
+    msg += f"P2P Market: https://p2p.binance.com/en/trade/all-payments/USDT?fiat=UGX"
     return msg
 
 def scanner():
