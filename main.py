@@ -1,133 +1,129 @@
-from flask import Flask
-import threading, requests, time, telebot, os
-from datetime import datetime
+import os
+import asyncio
+import aiohttp
+from telegram.ext import Application, CommandHandler
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-PORT = int(os.environ.get("PORT", 8000))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+MIN_GAP = float(os.getenv("MIN_GAP", "70"))
 
-app = Flask(__name__)
-bot = telebot.TeleBot(BOT_TOKEN)
+BINANCE_P2P_URL = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+ALLOWED_PAYMENTS = ["airtel", "mtn", "airtime", "m-pesa", "mobile money"]
 
-last_check_time = "Never"
-last_gap = 0
-last_error = "None"
-scan_count = 0
+status_data = {
+    "last_gap": 0,
+    "total_scans": 0,
+    "last_error": "None",
+    "best_buy": 0,
+    "best_sell": 0
+}
 
-@app.route('/')
-def home():
-    return f"Bot is Live! Last check: {last_check_time} | Gap: {last_gap}"
-
-@bot.message_handler(commands=['start'])
-def start_cmd(message):
-    bot.reply_to(message, "✅ UGX P2P Bot is Active!\nPAIR MODE\n/start\n/price\n/status")
-
-@bot.message_handler(commands=['price'])
-def price_cmd(message):
-    bot.reply_to(message, "⏳ Checking market...")
+async def fetch_offers(trade_type):
+    payload = {
+        "asset": "USDT",
+        "fiat": "UGX",
+        "merchantCheck": False,
+        "page": 1,
+        "rows": 20,
+        "tradeType": trade_type,
+        "payTypes": []
+    }
     try:
-        signal = format_signal(check_only=True)
-        if signal:
-            bot.send_message(message.chat.id, signal, disable_web_page_preview=True)
-        else:
-            bot.reply_to(message, "❌ No data from Binance, try again")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(BINANCE_P2P_URL, json=payload, timeout=15) as resp:
+                data = await resp.json()
+                offers = []
+                for item in data.get("data", []):
+                    adv = item.get("adv", {})
+                    advertiser = item.get("advertiser", {})
+                    price = float(adv.get("price", 0))
+                    pay_methods = [p.get("tradeMethodName","").lower() for p in adv.get("tradeMethods", [])]
+                    pay_str = " ".join(pay_methods)
+                    if any(a in pay_str for a in ALLOWED_PAYMENTS):
+                        offers.append({
+                            "price": price,
+                            "name": advertiser.get("nickName",""),
+                            "pay": ", ".join([p.get("tradeMethodName","") for p in adv.get("tradeMethods", [])]),
+                            "limit": f"{adv.get('minSingleTransAmount')} - {adv.get('maxSingleTransAmount')}",
+                        })
+                return offers
     except Exception as e:
-        bot.reply_to(message, f"Error: {e}")
-
-@bot.message_handler(commands=['status'])
-def status_cmd(message):
-    status_msg = f"BOT HEALTH\nMode: PAIR MODE\nLast check: {last_check_time}\nLast GAP: {last_gap:.2f} UGX\nTotal scans: {scan_count}\nLast error: {last_error}\nStatus: Running"
-    bot.reply_to(message, status_msg)
-
-def get_offers(trade, pay_types):
-    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
-    payload = {"asset":"USDT","fiat":"UGX","tradeType":trade,"page":1,"rows":10,"payTypes":pay_types}
-    try:
-        r = requests.post(url, json=payload, timeout=10).json()
-        return r['data']
-    except:
+        status_data["last_error"] = str(e)[:200]
         return []
 
-def format_signal(check_only=False):
-    global last_check_time, last_gap, last_error, scan_count
-    try:
-        buy_offers = get_offers("BUY", ["AirtelMoney", "MTNMobileMoney"])
-        sell_offers = get_offers("SELL", ["AirtelMoney", "MTNMobileMoney"])
-        scan_count += 1
-        last_check_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        if not buy_offers or not sell_offers:
-            last_error = "Binance returned empty"
-            return None
-
-        buy_sorted = sorted(buy_offers, key=lambda x: float(x['adv']['price']))
-        sell_sorted = sorted(sell_offers, key=lambda x: float(x['adv']['price']), reverse=True)
-
-        best_buy = buy_sorted[0]
-        best_sell = sell_sorted[0]
-        gap = float(best_sell['adv']['price']) - float(best_buy['adv']['price'])
-        last_gap = gap
-        last_error = "None"
-
-        if gap < 80 and not check_only:
-            return None
-
-        def get_info(data):
-            adv = data['adv']
-            user = data['advertiser']
-            return {
-                "price": adv['price'],
-                "min": adv['minSingleTransAmount'],
-                "max": adv['maxSingleTransAmount'],
-                "avail": adv['surplusAmount'],
-                "nick": user['nickName'],
-                "orders": user['monthOrderCount'],
-                "rate": int(float(user['monthFinishRate'])*100),
-                "link": f"https://p2p.binance.com/en/adDetail?adId={adv['advNo']}"
-            }
-
-        pairs = []
-        for i in range(min(2, len(buy_sorted), len(sell_sorted))):
-            b = get_info(buy_sorted[i])
-            s = get_info(sell_sorted[i])
-            g = float(s['price']) - float(b['price'])
-            pairs.append((b,s,g))
-
-        msg = f"GAP {gap:.0f} UGX | {len(pairs)} PAIRS FOUND\n\n"
-
-        for idx, (b,s,g) in enumerate(pairs, 1):
-            msg += f"--- PAIR {idx} | GAP {g:.0f} ---\n"
-            msg += "BUY @ " + str(b['price']) + " | " + str(b['nick']) + "\n"
-            msg += "Limit " + str(b['min']) + "-" + str(b['max']) + " | Avail " + str(b['avail']) + "\n"
-            msg += str(b['link']) + "\n\n"
-            msg += "SELL @ " + str(s['price']) + " | " + str(s['nick']) + "\n"
-            msg += "Limit " + str(s['min']) + "-" + str(s['max']) + " | Avail " + str(s['avail']) + "\n"
-            msg += str(s['link']) + "\n\n"
-            profit20 = g*20
-            profit100 = g*100
-            msg += f"Profit $20={profit20:.0f} | $100={profit100:.0f} UGX\n\n"
-
-        return msg
-    except Exception as e:
-        last_error = str(e)
-        print(f"Error: {e}")
-        return None
-
-def scanner():
+async def check_gap(app):
     while True:
         try:
-            signal = format_signal()
-            if signal:
-                bot.send_message(CHAT_ID, signal, disable_web_page_preview=True)
+            buy_offers = await fetch_offers("BUY")
+            sell_offers = await fetch_offers("SELL")
+            if buy_offers and sell_offers:
+                best_buy = sorted(buy_offers, key=lambda x: x["price"])[0]
+                best_sell = sorted(sell_offers, key=lambda x: x["price"], reverse=True)[0]
+                gap = best_sell["price"] - best_buy["price"]
+                status_data["last_gap"] = round(gap, 2)
+                status_data["best_buy"] = best_buy["price"]
+                status_data["best_sell"] = best_sell["price"]
+                status_data["total_scans"] += 1
+                status_data["last_error"] = "None"
+                if gap >= MIN_GAP:
+                    profit20 = gap * 20
+                    profit100 = gap * 100
+                    msg = f"""🚀 *UGX P2P ARBITRAGE ALERT* 🚀
+
+*GAP: {gap:.2f} UGX*
+
+*BUY CHEAP:*
+👤 {best_buy['name']}
+💰 {best_buy['price']} UGX
+🏦 {best_buy['pay']}
+
+*SELL HIGH:*
+👤 {best_sell['name']}
+💰 {best_sell['price']} UGX
+🏦 {best_sell['pay']}
+
+*PROFIT:*
+$20 => {profit20:,.0f} UGX
+$100 => {profit100:,.0f} UGX
+
+[Open Binance P2P](https://p2p.binance.com/en/trade/BUY/USDT?fiat=UGX)
+"""
+                    await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
+            await asyncio.sleep(120)
         except Exception as e:
-            print(f"Error scanner: {e}")
-        time.sleep(120)
+            status_data["last_error"] = str(e)[:200]
+            await asyncio.sleep(30)
 
-def run_bot():
-    bot.infinity_polling()
+async def status_cmd(update, context):
+    msg = f"✅ *Running*\n\n*GAP:* {status_data['last_gap']} UGX\n*BUY:* {status_data['best_buy']}\n*SELL:* {status_data['best_sell']}\n*Min:* {MIN_GAP}\n*Scans:* {status_data['total_scans']}\n*Error:* {status_data['last_error']}\n*Filters:* Airtel + MTN + Airtime"
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
-threading.Thread(target=scanner, daemon=True).start()
-threading.Thread(target=run_bot, daemon=True).start()
+async def price_cmd(update, context):
+    await update.message.reply_text("⏳ Scanning...")
+    buy_offers = await fetch_offers("BUY")
+    sell_offers = await fetch_offers("SELL")
+    if not buy_offers or not sell_offers:
+        await update.message.reply_text(f"No offers. Error: {status_data['last_error']}")
+        return
+    buy_sorted = sorted(buy_offers, key=lambda x: x["price"])[:3]
+    sell_sorted = sorted(sell_offers, key=lambda x: x["price"], reverse=True)[:3]
+    gap = sell_sorted[0]["price"] - buy_sorted[0]["price"]
+    text = f"*Current (Airtel+MTN+Airtime):*\n\n*BUY CHEAP:*\n"
+    for o in buy_sorted:
+        text += f"- {o['price']} | {o['name']} | {o['pay']}\n"
+    text += f"\n*SELL HIGH:*\n"
+    for o in sell_sorted:
+        text += f"- {o['price']} | {o['name']} | {o['pay']}\n"
+    text += f"\n*GAP: {gap:.2f} UGX* | $100 = {gap*100:,.0f} UGX"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("price", price_cmd))
+    app.job_queue.run_once(lambda ctx: asyncio.create_task(check_gap(app)), when=1)
+    print(f"Bot started MIN_GAP={MIN_GAP}")
+    app.run_polling()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    main()
