@@ -1,4 +1,2 @@
-Flask
-requests
-pyTelegramBotAPI
-gunicorn
+python-telegram-bot[job-queue]==20.7
+aiohttp==3.9.5
