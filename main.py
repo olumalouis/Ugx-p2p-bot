@@ -3,6 +3,7 @@ import threading, requests, time, telebot, os
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
+PORT = int(os.environ.get("PORT", 8000))
 
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -10,6 +11,10 @@ bot = telebot.TeleBot(BOT_TOKEN)
 @app.route('/')
 def home():
     return "Bot is Live!"
+
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    bot.reply_to(message, "✅ UGX P2P Bot is Active!\nYou will get alerts when GAP >= 80 UGX")
 
 def get_price(trade):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
@@ -32,7 +37,11 @@ def scanner():
                 except: pass
         time.sleep(30)
 
+def run_bot():
+    bot.infinity_polling()
+
 threading.Thread(target=scanner, daemon=True).start()
+threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=PORT)
